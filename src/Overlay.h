@@ -15,5 +15,7 @@ enum class OverlayInput
 };
 
 void ApplyOverlay(SDL_Window *window);
+void OverlaySetInput(OverlayInput input);
+OverlayInput OverlayGetInput();
 // Presents the frame (0xRRGGBB pixels, w x h) scaled to the window, with per-pixel alpha. Also polls the hotkeys.
 void OverlayPresent(SDL_Window *window, const uint32_t *vid, int w, int h);

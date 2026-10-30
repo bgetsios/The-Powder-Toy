@@ -28,6 +28,9 @@ drawn in software with per-pixel alpha, styled like Windows Vista Aero. They don
   tool's description in the status bar. Left click = primary tool (red outline), right click = secondary (blue).
   Drag by the title bar; the position is saved (`Overlay.Windows.Palette.X/Y`). Close or Ctrl+Alt+E
   (`Overlay.Keys.Palette`) hides and shows it. In Pass-through mode it fades and lets clicks through.
+- **Minimise** and close both hide a window to the tray icon.
+- **Tray icon** (notification area, bottom right): left click shows or hides the Elements window; right click opens
+  a menu with the Elements window, the three input modes and Exit.
 - UI scale: `Overlay.UIScale` (default: screen height / 1080, in quarter steps).
 
 ## To-do
@@ -40,6 +43,8 @@ drawn in software with per-pixel alpha, styled like Windows Vista Aero. They don
 - [ ] Menu access: show or hide the menu bars with a hotkey; optional auto-show when the cursor nears an edge
 - [x] Element palette as its own Vista window (2026-10-30)
 - [ ] Tool icons (walls, tools) on the palette buttons instead of colour swatches
+- [x] Minimise button and a tray icon with a menu (2026-10-30)
+- [ ] Vista-themed tray menu (it uses the native Windows 11 menu for now)
 - [ ] Kingsway-style taskbar / start button to open every window; then more windows: tools and brush, render and
       display modes, simulation options, save browser, stamps
 - [ ] Hide TPT's own menu bars in overlay mode once the windows cover them

@@ -2,6 +2,7 @@
 // software with per-pixel alpha. The look is Windows Vista Aero; other OS themes will replace the vista:: drawing.
 #include "OverlayWindows.h"
 #ifdef _WIN32
+#include "Overlay.h"
 #include "gui/game/GameController.h"
 #include "gui/game/Menu.h"
 #include "gui/game/tool/Tool.h"
@@ -14,6 +15,7 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <windowsx.h>
+#include <shellapi.h>
 
 namespace
 {
@@ -224,21 +226,34 @@ namespace
 			cv.RoundFrame(border - 1, titleH - 1, cv.w - 2 * border + 2, cv.h - titleH - border + 2, 0, 0x000000, 90);
 		}
 
-		// The close button: Vista's glossy red pill. hover brightens it.
-		void CloseButton(Canvas &cv, RECT rc, bool hover)
+		// A caption button: Vista's glossy red close pill, or the light glass minimise button. hover brightens it.
+		void CaptionButton(Canvas &cv, RECT rc, bool hover, bool close)
 		{
 			int w = rc.right - rc.left, h = rc.bottom - rc.top;
-			cv.RoundRect(rc.left, rc.top, w, h, S(3), hover ? 0xF3A08A : 0xE0907C, hover ? 0xD8341A : 0xC1361D, 255);
+			uint32_t top = close ? (hover ? 0xF3A08A : 0xE0907C) : (hover ? 0xF0F7FF : 0xE3ECF6);
+			uint32_t bottom = close ? (hover ? 0xD8341A : 0xC1361D) : (hover ? 0x5FA3E8 : 0x9AB5D3);
+			cv.RoundRect(rc.left, rc.top, w, h, S(3), top, bottom, close ? 255 : 235);
 			cv.RoundRect(rc.left + 1, rc.top + 1, w - 2, h / 2, S(3), 0xFFFFFF, 0xFFFFFF, 70, true);
-			cv.RoundFrame(rc.left, rc.top, w, h, S(3), 0x5A1E12, 220);
-			// The white x.
-			int cx = rc.left + w / 2, cy = rc.top + h / 2, k = S(3.5f);
-			for (int i = -k; i <= k; i++)
-				for (int t = 0; t < S(2); t++)
-				{
-					cv.Blend(cx + i + t, cy + i, 0xFFFFFF, 255);
-					cv.Blend(cx + i + t, cy - i, 0xFFFFFF, 255);
-				}
+			cv.RoundFrame(rc.left, rc.top, w, h, S(3), close ? 0x5A1E12 : 0x1F3B5A, 220);
+			int cx = rc.left + w / 2, cy = rc.top + h / 2;
+			if (close)
+			{
+				// The white x.
+				int k = S(3.5f);
+				for (int i = -k; i <= k; i++)
+					for (int t = 0; t < S(2); t++)
+					{
+						cv.Blend(cx + i + t, cy + i, 0xFFFFFF, 255);
+						cv.Blend(cx + i + t, cy - i, 0xFFFFFF, 255);
+					}
+			}
+			else
+			{
+				// The white bar, outlined dark like Vista's.
+				int bw = S(9), bh = S(3), bx = cx - bw / 2, by = cy + S(1);
+				cv.RoundRect(bx - 1, by - 1, bw + 2, bh + 2, 0, 0x1F3B5A, 0x1F3B5A, 200);
+				cv.RoundRect(bx, by, bw, bh, 0, 0xFFFFFF, 0xFFFFFF, 255);
+			}
 		}
 
 		// A Vista push button. state: 0 normal, 1 hover, 2 pressed/selected.
@@ -390,7 +405,7 @@ namespace
 		int titleH, border, navW, statusH, tileW, tileH, gap;
 		int section = 0, scroll = 0;
 		int hoverNav = -1, hoverTile = -1;
-		bool hoverClose = false;
+		bool hoverClose = false, hoverMin = false;
 		Tool *shownPrimary = nullptr, *shownSecondary = nullptr;
 
 		Palette()
@@ -433,6 +448,11 @@ namespace
 		{
 			return { cv.w - border - S(43), 1, cv.w - border, 1 + S(18) };
 		}
+		RECT MinRect()
+		{
+			auto close = CloseRect();
+			return { close.left - S(27), close.top, close.left, close.bottom };
+		}
 		RECT ToolArea()
 		{
 			return { border + navW + gap, titleH + gap, cv.w - border - gap, cv.h - border - statusH };
@@ -458,7 +478,8 @@ namespace
 		void Paint() override
 		{
 			vista::Frame(cv, titleH, border, L"Elements");
-			vista::CloseButton(cv, CloseRect(), hoverClose);
+			vista::CaptionButton(cv, MinRect(), hoverMin, false);
+			vista::CaptionButton(cv, CloseRect(), hoverClose, true);
 			// Client area: the navigation pane (pale blue, Vista Explorer) and the white content area.
 			cv.RoundRect(border, titleH, navW, cv.h - titleH - border, 0, 0xF1F5FB, 0xE5EDF8, 255);
 			cv.RoundRect(border + navW, titleH, cv.w - 2 * border - navW, cv.h - titleH - border, 0, 0xFFFFFF, 0xFFFFFF, 255);
@@ -519,7 +540,7 @@ namespace
 
 		LRESULT HitTest(int x, int y) override
 		{
-			return y < titleH && !Inside(CloseRect(), x, y) ? HTCAPTION : HTCLIENT;
+			return y < titleH && !Inside(CloseRect(), x, y) && !Inside(MinRect(), x, y) ? HTCAPTION : HTCLIENT;
 		}
 
 		void Mouse(UINT msg, int x, int y, WPARAM wp) override
@@ -533,15 +554,15 @@ namespace
 			if (Inside(area, x, y))
 				for (int i = 0; i < int(tools.size()); i++)
 					if (Inside(TileRect(i), x, y)) tile = i;
-			bool close = Inside(CloseRect(), x, y);
+			bool close = Inside(CloseRect(), x, y), min = Inside(MinRect(), x, y);
 			if (msg == WM_MOUSELEAVE)
 			{
 				nav = tile = -1;
-				close = false;
+				close = min = false;
 			}
-			if (nav != hoverNav || tile != hoverTile || close != hoverClose)
+			if (nav != hoverNav || tile != hoverTile || close != hoverClose || min != hoverMin)
 			{
-				hoverNav = nav, hoverTile = tile, hoverClose = close;
+				hoverNav = nav, hoverTile = tile, hoverClose = close, hoverMin = min;
 				dirty = true;
 			}
 			if ((msg == WM_LBUTTONDOWN || msg == WM_RBUTTONDOWN) && tile >= 0)
@@ -556,7 +577,8 @@ namespace
 				hoverTile = -1;
 				dirty = true;
 			}
-			if (msg == WM_LBUTTONUP && close)
+			// Both hide the window; the tray icon brings it back. ponytail: no minimise animation to the tray yet.
+			if (msg == WM_LBUTTONUP && (close || min))
 			{
 				OverlayWindows::TogglePalette();
 			}
@@ -645,6 +667,83 @@ namespace
 	std::unique_ptr<Toast> toast;
 	bool passThrough = false;
 
+	// The notification-area (tray) icon: left click shows or hides the Elements window, right click opens a menu.
+	NOTIFYICONDATAW tray{};
+	constexpr UINT trayMessage = WM_APP + 1;
+
+	LRESULT CALLBACK TrayProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
+	{
+		if (msg != trayMessage)
+		{
+			return DefWindowProcW(hwnd, msg, wp, lp);
+		}
+		if (lp == WM_LBUTTONUP)
+		{
+			OverlayWindows::TogglePalette();
+		}
+		if (lp == WM_RBUTTONUP)
+		{
+			enum { elements = 1, inputBase = 10, exitItem = 99 };
+			// ponytail: a native menu (Windows 11 look); a Vista-themed one comes with the theme system.
+			HMENU menu = CreatePopupMenu();
+			bool open = palette && IsWindowVisible(palette->hwnd);
+			AppendMenuW(menu, MF_STRING | (open ? MF_CHECKED : 0), elements, L"Elements window	Ctrl+Alt+E");
+			AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+			const wchar_t *modes[] = { L"Input: Auto", L"Input: Pass-through", L"Input: Locked to TPT" };
+			for (int i = 0; i < int(OverlayInput::Count); i++)
+			{
+				AppendMenuW(menu, MF_STRING | (int(OverlayGetInput()) == i ? MF_CHECKED : 0), inputBase + i, modes[i]);
+			}
+			AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+			AppendMenuW(menu, MF_STRING, exitItem, L"Exit");
+			POINT p;
+			GetCursorPos(&p);
+			SetForegroundWindow(hwnd); // so the menu closes when you click elsewhere
+			int cmd = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON | TPM_BOTTOMALIGN, p.x, p.y, 0, hwnd, nullptr);
+			PostMessageW(hwnd, WM_NULL, 0, 0);
+			DestroyMenu(menu);
+			if (cmd == elements)
+			{
+				OverlayWindows::TogglePalette();
+			}
+			if (cmd >= inputBase && cmd < inputBase + int(OverlayInput::Count))
+			{
+				OverlaySetInput(OverlayInput(cmd - inputBase));
+			}
+			if (cmd == exitItem)
+			{
+				SDL_Event quit{};
+				quit.type = SDL_QUIT;
+				SDL_PushEvent(&quit);
+			}
+		}
+		return 0;
+	}
+
+	void AddTrayIcon()
+	{
+		WNDCLASSW wc{};
+		wc.lpfnWndProc = TrayProc;
+		wc.hInstance = GetModuleHandleW(nullptr);
+		wc.lpszClassName = L"TPTOverlayTray";
+		RegisterClassW(&wc);
+		tray.cbSize = sizeof(tray);
+		tray.hWnd = CreateWindowExW(0, wc.lpszClassName, L"", 0, 0, 0, 0, 0, HWND_MESSAGE, nullptr, wc.hInstance, nullptr);
+		tray.uID = 1;
+		tray.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
+		tray.uCallbackMessage = trayMessage;
+		wchar_t exe[MAX_PATH];
+		GetModuleFileNameW(nullptr, exe, MAX_PATH);
+		tray.hIcon = ExtractIconW(wc.hInstance, exe, 0);
+		if (!tray.hIcon || tray.hIcon == HICON(1))
+		{
+			tray.hIcon = LoadIconW(nullptr, IDI_APPLICATION);
+		}
+		wcscpy_s(tray.szTip, L"The Powder Toy (overlay)");
+		Shell_NotifyIconW(NIM_ADD, &tray);
+		std::atexit([] { Shell_NotifyIconW(NIM_DELETE, &tray); });
+	}
+
 	void ApplyPassThrough(Panel &panel)
 	{
 		auto ex = GetWindowLongPtrW(panel.hwnd, GWL_EXSTYLE);
@@ -663,6 +762,7 @@ void OverlayWindows::Init(void *mainHwnd)
 	uiScale = prefs.Get("Overlay.UIScale", std::max(1.f, std::round(screenH / 1080.f * 4) / 4));
 	text = new Text;
 	text->SetScale();
+	AddTrayIcon();
 }
 
 void OverlayWindows::Tick()

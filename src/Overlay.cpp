@@ -78,6 +78,24 @@ namespace
 }
 #endif
 
+void OverlaySetInput(OverlayInput newInput)
+{
+#ifdef _WIN32
+	SetInput(newInput);
+#else
+	(void)newInput;
+#endif
+}
+
+OverlayInput OverlayGetInput()
+{
+#ifdef _WIN32
+	return input;
+#else
+	return OverlayInput::Auto;
+#endif
+}
+
 void ApplyOverlay(SDL_Window *window)
 {
 #ifdef _WIN32
