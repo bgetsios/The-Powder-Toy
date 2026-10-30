@@ -300,3 +300,17 @@ option(
 	value: false,
 	description: 'Run clang-tidy to lint programming issues'
 )
+option(
+	'sim_cells_x',
+	type: 'integer',
+	min: 16,
+	value: 153,
+	description: 'Simulation width in cells of 4 pixels (stock TPT: 153). The playable area can be smaller at runtime'
+)
+option(
+	'sim_cells_y',
+	type: 'integer',
+	min: 16,
+	value: 96,
+	description: 'Simulation height in cells of 4 pixels (stock TPT: 96)'
+)

@@ -9,7 +9,12 @@ constexpr float M_GRAV = 6.67300e-1f;
 
 //CELL, the size of the pressure, gravity, and wall maps. Larger than 1 to prevent extreme lag
 constexpr int CELL = 4;
-constexpr Vec2<int> CELLS = Vec2(153, 96);
+// The largest simulation, set at build time (meson -Dsim_cells_x/y); the playable area inside it can change at runtime.
+#ifndef SIM_CELLS_X
+# define SIM_CELLS_X 153
+# define SIM_CELLS_Y 96
+#endif
+constexpr Vec2<int> CELLS = Vec2(SIM_CELLS_X, SIM_CELLS_Y);
 constexpr Vec2<int> RES = CELLS * CELL;
 
 constexpr int XCELLS = CELLS.X;

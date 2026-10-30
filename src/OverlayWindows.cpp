@@ -7,13 +7,17 @@
 #include "gui/game/GameModel.h"
 #include "graphics/VideoBuffer.h"
 #include "simulation/Simulation.h"
+#include "simulation/Air.h"
 #include "SimulationConfig.h"
 #include "gui/game/Menu.h"
 #include "gui/game/tool/Tool.h"
 #include "prefs/GlobalPrefs.h"
 #include "common/platform/Platform.h"
+#include "graphics/Renderer.h"
+#include "gui/game/RenderPreset.h"
 #include <algorithm>
 #include <cmath>
+#include <functional>
 #include <memory>
 #include <vector>
 #define WIN32_LEAN_AND_MEAN
@@ -192,6 +196,7 @@ namespace
 		}
 	};
 	Text *text;
+	bool showTPTMenus = false;
 
 	std::wstring Wide(const String &s)
 	{
@@ -401,22 +406,29 @@ namespace
 		return x >= rc.left && x < rc.right && y >= rc.top && y < rc.bottom;
 	}
 
-	// The element palette: TPT's menu sections down the left (like Explorer's navigation pane), the section's
-	// tools as Vista buttons on the right, the hovered tool's description in a status bar. Left click picks the
-	// primary tool, right click the secondary, as in TPT.
-	struct Palette : Panel
+	// The side window: every TPT menu as a tab. Elements has TPT's menu sections down the left (Explorer's
+	// navigation pane) and the section's tools as Vista buttons; left click picks the primary tool, right click the
+	// secondary, as in TPT. The other tabs are immediate-mode Vista controls: each paint rebuilds the list of
+	// clickable rectangles (hits) that the mouse handler uses.
+	struct SideWindow : Panel
 	{
-		int titleH, border, navW, statusH, tileW, tileH, gap;
-		int section = 0, scroll = 0;
-		int hoverNav = -1, hoverTile = -1;
-		bool hoverClose = false, hoverMin = false;
-		Tool *shownPrimary = nullptr, *shownSecondary = nullptr;
-		size_t shownTools = 0;
-
-		Palette()
+		struct Hit
 		{
-			name = "Palette";
-			titleH = S(28), border = S(6), navW = S(118), statusH = S(22), tileW = S(92), tileH = S(24), gap = S(4);
+			RECT rc;
+			std::function<void()> left, right;
+			std::wstring tip;
+		};
+		std::vector<Hit> hits;
+		int hover = -1;
+		int tab = 0, section = 0, scroll = 0;
+		int titleH, border, tabH, navW, statusH, tileW, tileH, gap;
+		uint64_t shownState = 0;
+		static constexpr const wchar_t *tabNames[] = { L"Elements", L"Simulation", L"Display", L"Saves", L"Overlay" };
+
+		SideWindow()
+		{
+			name = "Palette"; // keeps the saved position of the old Elements window
+			titleH = S(28), border = S(6), tabH = S(24), navW = S(118), statusH = S(22), tileW = S(92), tileH = S(24), gap = S(4);
 		}
 
 		std::vector<Menu *> Sections()
@@ -458,9 +470,15 @@ namespace
 			auto close = CloseRect();
 			return { close.left - S(27), close.top, close.left, close.bottom };
 		}
+		// Below the tabs, above the status bar.
+		RECT Content()
+		{
+			return { border, titleH + tabH, cv.w - border, cv.h - border - statusH };
+		}
 		RECT ToolArea()
 		{
-			return { border + navW + gap, titleH + gap, cv.w - border - gap, cv.h - border - statusH };
+			auto c = Content();
+			return { c.left + navW + gap, c.top + gap, c.right - gap, c.bottom };
 		}
 		int Columns()
 		{
@@ -476,31 +494,95 @@ namespace
 		}
 		RECT NavRect(int i)
 		{
+			auto c = Content();
 			int h = S(22);
-			return { border + S(3), titleH + S(4) + i * h, border + navW - S(3), titleH + S(4) + (i + 1) * h - S(1) };
+			return { c.left + S(3), c.top + S(4) + i * h, c.left + navW - S(3), c.top + S(4) + (i + 1) * h - S(1) };
 		}
 
-		void Paint() override
+		bool Hovered(const RECT &rc)
 		{
-			vista::Frame(cv, titleH, border, L"Elements");
-			vista::CaptionButton(cv, MinRect(), hoverMin, false);
-			vista::CaptionButton(cv, CloseRect(), hoverClose, true);
-			// Client area: the navigation pane (pale blue, Vista Explorer) and the white content area.
-			cv.RoundRect(border, titleH, navW, cv.h - titleH - border, 0, 0xF1F5FB, 0xE5EDF8, 255);
-			cv.RoundRect(border + navW, titleH, cv.w - 2 * border - navW, cv.h - titleH - border, 0, 0xFFFFFF, 0xFFFFFF, 255);
-			for (int j = titleH; j < cv.h - border; j++) cv.Blend(border + navW, j, 0xA0AFC3, 255);
+			return hover >= 0 && hover < int(hits.size()) && EqualRect(&hits[hover].rc, &rc);
+		}
+
+		RECT Add(RECT rc, std::function<void()> left, std::wstring tip = L"", std::function<void()> right = nullptr)
+		{
+			hits.push_back({ rc, std::move(left), std::move(right), std::move(tip) });
+			return rc;
+		}
+
+		// --- Vista controls; each draws itself and registers its hit rectangle.
+
+		void PushButton(int x, int y, int w, const std::wstring &label, std::function<void()> action, const std::wstring &tip = L"", bool pressed = false)
+		{
+			RECT rc{ x, y, x + w, y + S(23) };
+			vista::Button(cv, x, y, w, S(23), pressed ? 2 : (Hovered(rc) ? 1 : 0));
+			auto size = text->Measure(label);
+			text->Draw(cv, x + (w - size.cx) / 2, y + (S(23) - size.cy) / 2, label, 0x000000, false, w - S(6));
+			Add(rc, std::move(action), tip);
+		}
+
+		// A check box (round = radio button) with its label; returns the width used.
+		int Toggle(int x, int y, const std::wstring &label, bool on, bool round, std::function<void()> action, const std::wstring &tip = L"")
+		{
+			int b = S(13), w = b + S(6) + text->Measure(label).cx;
+			RECT rc{ x, y, x + w, y + S(20) };
+			bool hot = Hovered(rc);
+			int by = y + (S(20) - b) / 2, r = round ? b / 2 : S(2);
+			cv.RoundRect(x, by, b, b, r, hot ? 0xDEF3FD : 0xF4F4F4, hot ? 0xB1DFFD : 0xDEDEDE, 255);
+			cv.RoundFrame(x, by, b, b, r, hot ? 0x3C7FB1 : 0x8E8F8F, 255);
+			if (on && round)
+			{
+				int d = b / 2;
+				cv.RoundRect(x + (b - d) / 2, by + (b - d) / 2, d, d, d / 2, 0x8AD0F2, 0x1C64B4, 255);
+			}
+			if (on && !round)
+			{
+				int cx = x + b / 2, cy = by + b / 2, k = S(2.5f);
+				for (int t = 0; t < S(1.6f); t++)
+				{
+					for (int i = 0; i <= k; i++) cv.Blend(cx - k - 1 + i, cy + i - 1 + t, 0x1C3D6E, 255);
+					for (int i = 0; i <= 2 * k; i++) cv.Blend(cx - 1 + i, cy + k - 1 - i + t, 0x1C3D6E, 255);
+				}
+			}
+			text->Draw(cv, x + b + S(6), y + (S(20) - text->Measure(label).cy) / 2, label, 0x000000);
+			Add(rc, std::move(action), tip);
+			return w;
+		}
+
+		// A Vista group box: a rounded pale outline with a blue heading; returns the top of its inside.
+		int Group(int x, int y, int w, int h, const std::wstring &title)
+		{
+			cv.RoundFrame(x, y + S(8), w, h - S(8), S(3), 0xD5DFE5, 255);
+			auto size = text->Measure(title);
+			cv.RoundRect(x + S(8), y, size.cx + S(8), size.cy, 0, 0xFFFFFF, 0xFFFFFF, 255);
+			text->Draw(cv, x + S(12), y, title, 0x1E395B);
+			return y + size.cy + S(4);
+		}
+
+		void Caption(int x, int y, const std::wstring &s, uint32_t rgb = 0x000000)
+		{
+			text->Draw(cv, x, y + (S(20) - text->Measure(s).cy) / 2, s, rgb);
+		}
+
+		// --- tabs
+
+		void PaintElements()
+		{
+			auto c = Content();
+			cv.RoundRect(c.left, c.top, navW, c.bottom - c.top, 0, 0xF1F5FB, 0xE5EDF8, 255);
+			for (int j = c.top; j < c.bottom; j++) cv.Blend(c.left + navW, j, 0xA0AFC3, 255);
 			auto sections = Sections();
 			for (int i = 0; i < int(sections.size()); i++)
 			{
 				auto rc = NavRect(i);
-				vista::NavItem(cv, rc.left, rc.top, rc.right - rc.left, rc.bottom - rc.top, i == section ? 2 : (i == hoverNav ? 1 : 0));
+				vista::NavItem(cv, rc.left, rc.top, rc.right - rc.left, rc.bottom - rc.top, i == section ? 2 : (Hovered(rc) ? 1 : 0));
 				text->Draw(cv, rc.left + S(6), rc.top + S(3), Wide(sections[i]->GetDescription()), 0x1E395B, i == section, rc.right - rc.left - S(10));
+				Add(rc, [this, i] { section = i, scroll = 0; });
 			}
 			auto tools = Tools();
 			auto area = ToolArea();
 			auto &gc = GameController::Ref();
-			shownPrimary = gc.GetActiveTool(0);
-			shownSecondary = gc.GetActiveTool(1);
+			auto *primary = gc.GetActiveTool(0), *secondary = gc.GetActiveTool(1);
 			for (int i = 0; i < int(tools.size()); i++)
 			{
 				auto rc = TileRect(i);
@@ -509,12 +591,12 @@ namespace
 					continue;
 				}
 				auto *tool = tools[i];
-				bool selected = tool == shownPrimary || tool == shownSecondary;
+				bool selected = tool == primary || tool == secondary;
 				Canvas tile;
 				tile.Resize(tileW, tileH);
-				vista::Button(tile, 0, 0, tileW, tileH, selected ? 2 : (i == hoverTile ? 1 : 0));
-				if (tool == shownPrimary) tile.RoundFrame(0, 0, tileW, tileH, S(3), 0xD02020, 255);
-				if (tool == shownSecondary) tile.RoundFrame(1, 1, tileW - 2, tileH - 2, S(3), 0x2050D0, 255);
+				vista::Button(tile, 0, 0, tileW, tileH, selected ? 2 : (Hovered(rc) ? 1 : 0));
+				if (tool == primary) tile.RoundFrame(0, 0, tileW, tileH, S(3), 0xD02020, 255);
+				if (tool == secondary) tile.RoundFrame(1, 1, tileW - 2, tileH - 2, S(3), 0x2050D0, 255);
 				auto col = tool->Colour;
 				uint32_t rgb = (col.Red << 16) | (col.Green << 8) | col.Blue;
 				int sw = tileH - S(10);
@@ -534,7 +616,7 @@ namespace
 					tile.RoundFrame(S(5), S(5), sw, sw, S(2), 0x404040, 200);
 				}
 				text->Draw(tile, S(9) + sw, (tileH - text->Measure(Label(tool)).cy) / 2, Label(tool), 0x000000, false, tileW - sw - S(12));
-				// Copy the tile in, clipped to the content area.
+				// Copy the tile in, clipped to the tool area.
 				for (int y = 0; y < tileH; y++)
 				{
 					int dy = rc.top + y;
@@ -545,14 +627,224 @@ namespace
 						cv.Blend(rc.left + x, dy, p & 0xFFFFFF, p >> 24);
 					}
 				}
+				RECT visible{ rc.left, std::max(rc.top, area.top), rc.right, std::min(rc.bottom, area.bottom) };
+				Add(visible, [tool] { GameController::Ref().SetActiveTool(0, tool); }, Wide(tool->Description),
+				    [tool] { GameController::Ref().SetActiveTool(1, tool); });
 			}
-			// The status bar.
-			int sy = cv.h - border - statusH;
-			cv.RoundRect(border + navW + 1, sy, cv.w - 2 * border - navW - 1, statusH, 0, 0xF7F9FC, 0xDCE5F1, 255);
-			for (int i = border + navW + 1; i < cv.w - border; i++) cv.Blend(i, sy, 0xA0AFC3, 255);
-			if (hoverTile >= 0 && hoverTile < int(tools.size()))
+		}
+
+		void PaintSimulation()
+		{
+			auto c = Content();
+			auto &gc = GameController::Ref();
+			auto *model = gc.GetModel();
+			auto *sim = model->GetSimulation();
+			int x = c.left + S(10), w = c.right - c.left - S(20), y = c.top + S(8);
+
+			// The playable area, in cells of 4 pixels.
+			int top = Group(x, y, w, S(118), L"Play area");
+			auto a = sim->playArea;
+			Caption(x + S(12), top, L"Size: " + std::to_wstring(a.size.X * CELL) + L" \u00D7 " + std::to_wstring(a.size.Y * CELL) +
+			      L" pixels   (largest " + std::to_wstring(XRES) + L" \u00D7 " + std::to_wstring(YRES) + L")");
+			int step = 8; // cells
+			auto set = [](Rect<int> r) { OverlayWindows::SetPlayArea(r.pos.X, r.pos.Y, r.size.X, r.size.Y); };
+			// Grow or shrink about the centre.
+			auto resize = [a, set](int dw, int dh) {
+				auto r = a;
+				r.size.X = std::clamp(r.size.X + dw, 8, CELLS.X);
+				r.size.Y = std::clamp(r.size.Y + dh, 8, CELLS.Y);
+				r.pos.X = std::clamp(a.pos.X - (r.size.X - a.size.X) / 2, 0, CELLS.X - r.size.X);
+				r.pos.Y = std::clamp(a.pos.Y - (r.size.Y - a.size.Y) / 2, 0, CELLS.Y - r.size.Y);
+				set(r);
+			};
+			int by = top + S(24), bw = S(34);
+			Caption(x + S(12), by, L"Width");
+			PushButton(x + S(60), by, bw, L"\u2212", [=] { resize(-step, 0); }, L"Narrower by 32 pixels");
+			PushButton(x + S(60) + bw + S(4), by, bw, L"+", [=] { resize(step, 0); }, L"Wider by 32 pixels");
+			Caption(x + S(160), by, L"Height");
+			PushButton(x + S(210), by, bw, L"\u2212", [=] { resize(0, -step); }, L"Shorter by 32 pixels");
+			PushButton(x + S(210) + bw + S(4), by, bw, L"+", [=] { resize(0, step); }, L"Taller by 32 pixels");
+			by += S(30);
+			int pw = (w - S(24) - 2 * S(6)) / 3;
+			PushButton(x + S(12), by, pw, L"Whole screen", [=] { set(CELLS.OriginRect()); }, L"Use the whole sim");
+			PushButton(x + S(12) + pw + S(6), by, pw, L"Stock TPT size", [=] {
+				auto stock = Vec2(std::min(153, CELLS.X), std::min(96, CELLS.Y));
+				set(RectSized((CELLS - stock) / 2, stock));
+			}, L"612 \u00D7 384, centred: saves made at this size open in normal TPT");
+			PushButton(x + S(12) + 2 * (pw + S(6)), by, pw, L"Centre", [=] { set(RectSized((CELLS - a.size) / 2, a.size)); }, L"Move the area to the middle");
+			y += S(126);
+
+			top = Group(x, y, w, S(60), L"Running");
+			bool paused = gc.GetPaused();
+			int bw4 = (w - S(24) - 3 * S(6)) / 4;
+			PushButton(x + S(12), top, bw4, paused ? L"Resume" : L"Pause", [] { auto &g = GameController::Ref(); g.SetPaused(!g.GetPaused()); }, L"Space", paused);
+			PushButton(x + S(12) + bw4 + S(6), top, bw4, L"Step", [] { GameController::Ref().FrameStep(); }, L"One frame (F)");
+			PushButton(x + S(12) + 2 * (bw4 + S(6)), top, bw4, L"Reload", [] { GameController::Ref().ReloadSim(); }, L"Back to the last loaded save (F5)");
+			PushButton(x + S(12) + 3 * (bw4 + S(6)), top, bw4, L"Clear", [] { GameController::Ref().ClearSim(); }, L"Empty the sim");
+			y += S(68);
+
+			top = Group(x, y, w, S(52), L"Edges");
+			const wchar_t *edges[] = { L"Void", L"Solid", L"Loop" };
+			const wchar_t *edgeTips[] = { L"Particles and air leave at the edges", L"The edges are walls", L"Particles wrap around (whole screen only for now)" };
+			int ex = x + S(12);
+			for (int i = 0; i < 3; i++)
 			{
-				text->Draw(cv, border + navW + S(8), sy + S(3), Wide(tools[hoverTile]->Description), 0x1E395B, false, cv.w - 2 * border - navW - S(16));
+				ex += Toggle(ex, top, edges[i], gc.GetEdgeMode() == i, true, [i] { GameController::Ref().SetEdgeMode(i); }, edgeTips[i]) + S(18);
+			}
+			y += S(60);
+
+			top = Group(x, y, w, S(76), L"Gravity");
+			const wchar_t *gravs[] = { L"Vertical", L"Off", L"Radial", L"Custom" };
+			int gx = x + S(12);
+			for (int i = 0; i < 4; i++)
+			{
+				gx += Toggle(gx, top, gravs[i], sim->gravityMode == i, true, [sim, i] { sim->gravityMode = i; }) + S(18);
+			}
+			Toggle(x + S(12), top + S(24), L"Newtonian gravity", model->GetNewtonianGrvity(), false,
+			       [model] { model->SetNewtonianGravity(!model->GetNewtonianGrvity()); }, L"Heavy particles pull on each other (N)");
+			y += S(84);
+
+			top = Group(x, y, w, S(100), L"Air");
+			const wchar_t *airs[] = { L"On", L"Pressure off", L"Velocity off", L"Off", L"No update" };
+			int ax = x + S(12), ay = top;
+			for (int i = 0; i < 5; i++)
+			{
+				int tw = text->Measure(airs[i]).cx + S(19);
+				if (ax + tw > x + w - S(12))
+				{
+					ax = x + S(12), ay += S(24);
+				}
+				ax += Toggle(ax, ay, airs[i], sim->air->airMode == i, true, [sim, i] { sim->air->airMode = i; }) + S(18);
+			}
+			Toggle(x + S(12), ay + S(24), L"Ambient heat", gc.GetAHeatEnable(), false, [] { GameController::Ref().ToggleAHeat(); }, L"The air carries heat (U)");
+		}
+
+		void PaintDisplay()
+		{
+			auto c = Content();
+			auto &gc = GameController::Ref();
+			auto *model = gc.GetModel();
+			int x = c.left + S(10), w = c.right - c.left - S(20), y = c.top + S(8);
+			auto &presets = Renderer::renderModePresets;
+			int rows = (int(presets.size()) + 2) / 3;
+			int top = Group(x, y, w, S(20) + rows * S(29), L"View mode");
+			int bw = (w - S(24) - 2 * S(6)) / 3;
+			for (int i = 0; i < int(presets.size()); i++)
+			{
+				PushButton(x + S(12) + (i % 3) * (bw + S(6)), top + (i / 3) * S(29), bw, Wide(presets[i].Name),
+				           [i] { GameController::Ref().LoadRenderPreset(i); }, L"Number key " + std::to_wstring(i == 9 ? 0 : i + 1));
+			}
+			y += S(28) + rows * S(29);
+			top = Group(x, y, w, S(100), L"Show");
+			Toggle(x + S(12), top, L"HUD", gc.GetHudEnable(), false, [] { auto &g = GameController::Ref(); g.SetHudEnable(!g.GetHudEnable()); }, L"Frame rate, particle count and cursor info (H)");
+			Toggle(x + S(12), top + S(24), L"Decorations", model->GetDecoration(), false, [] { GameController::Ref().SetDecoration(); }, L"Painted colours (Ctrl+B)");
+			Toggle(x + S(12), top + S(48), L"Gravity field", model->GetGravityGrid(), false, [] { GameController::Ref().ShowGravityGrid(); }, L"Newtonian gravity lines (Ctrl+G)");
+			y += S(108);
+			PushButton(x, y, S(200), L"More render options\u2026", [] { GameController::Ref().OpenRenderOptions(); }, L"TPT's full render settings");
+		}
+
+		void PaintSaves()
+		{
+			auto c = Content();
+			int x = c.left + S(10), w = c.right - c.left - S(20), y = c.top + S(8);
+			int top = Group(x, y, w, S(96), L"Saves");
+			int bw = (w - S(24) - S(6)) / 2;
+			PushButton(x + S(12), top, bw, L"Open\u2026", [] { GameController::Ref().OpenLocalBrowse(); }, L"Your local saves");
+			PushButton(x + S(12) + bw + S(6), top, bw, L"Save\u2026", [] { GameController::Ref().OpenLocalSaveWindow(false); },
+			           L"Saves the play area; at 612 \u00D7 384 or smaller it opens in normal TPT");
+			PushButton(x + S(12), top + S(29), bw, L"Stamps\u2026", [] { GameController::Ref().OpenStamps(); }, L"Saved selections (K)");
+			PushButton(x + S(12) + bw + S(6), top + S(29), bw, L"Reload", [] { GameController::Ref().ReloadSim(); }, L"Back to the last loaded save (F5)");
+			y += S(104);
+			top = Group(x, y, w, S(52), L"TPT");
+			PushButton(x + S(12), top, bw, L"Options\u2026", [] { GameController::Ref().OpenOptions(); }, L"TPT's own settings window");
+		}
+
+		void PaintOverlay()
+		{
+			auto c = Content();
+			int x = c.left + S(10), w = c.right - c.left - S(20), y = c.top + S(8);
+			auto &prefs = GlobalPrefs::Ref();
+			auto key = [&](const char *name, const char *fallback) {
+				return Platform::WinWiden(prefs.Get(ByteString("Overlay.Keys.") + name, ByteString(fallback)));
+			};
+			int top = Group(x, y, w, S(100), L"Clicks go to");
+			const wchar_t *modes[] = { L"Auto: particles and menus to TPT, empty space to the desktop", L"Pass-through: everything to the desktop", L"Locked: everything to TPT" };
+			for (int i = 0; i < int(OverlayInput::Count); i++)
+			{
+				Toggle(x + S(12), top + i * S(24), modes[i], int(OverlayGetInput()) == i, true, [i] { OverlaySetInput(OverlayInput(i)); });
+			}
+			y += S(108);
+			top = Group(x, y, w, S(44), L"Window");
+			Toggle(x + S(12), top, L"Show TPT's own menus too", showTPTMenus, false, [] {
+				showTPTMenus = !showTPTMenus;
+				GlobalPrefs::Ref().Set("Overlay.ShowTPTMenus", showTPTMenus);
+			});
+			y += S(52);
+			top = Group(x, y, w, S(124), L"Shortcuts (any app)");
+			std::wstring rows[][2] = {
+				{ L"Next input mode", key("CycleInput", "Ctrl+Alt+O") },
+				{ L"Pass-through on/off", key("PassThrough", "Ctrl+Alt+P") },
+				{ L"Locked on/off", key("Locked", "Ctrl+Alt+L") },
+				{ L"Show/hide this window", key("Palette", "Ctrl+Alt+E") },
+			};
+			for (int i = 0; i < 4; i++)
+			{
+				Caption(x + S(12), top + i * S(24), rows[i][0]);
+				Caption(x + S(200), top + i * S(24), rows[i][1], 0x1E395B);
+			}
+			y += S(132);
+			Caption(x, y, L"Change shortcuts and UI scale in powder.pref (Overlay.*) for now.", 0x6D6D6D);
+		}
+
+		void Paint() override
+		{
+			hits.clear();
+			vista::Frame(cv, titleH, border, L"The Powder Toy");
+			vista::CaptionButton(cv, MinRect(), Hovered(MinRect()), false);
+			vista::CaptionButton(cv, CloseRect(), Hovered(CloseRect()), true);
+			Add(MinRect(), [] { OverlayWindows::TogglePalette(); }, L"Minimise to the tray");
+			Add(CloseRect(), [] { OverlayWindows::TogglePalette(); }, L"Close (the tray icon brings it back)");
+
+			// The tab strip: grey tabs on the glass, the selected one white and joined to the page.
+			int tx = border + S(4);
+			cv.RoundRect(border, titleH, cv.w - 2 * border, tabH, 0, 0xF0F0F0, 0xF0F0F0, 255);
+			for (int i = 0; i < int(std::size(tabNames)); i++)
+			{
+				int tw = text->Measure(tabNames[i]).cx + S(20);
+				bool on = i == tab;
+				RECT rc{ tx, titleH + (on ? S(2) : S(4)), tx + tw, titleH + tabH + (on ? 1 : 0) };
+				bool hot = !on && Hovered(rc);
+				cv.RoundRect(rc.left, rc.top, tw, rc.bottom - rc.top, S(3), on ? 0xFFFFFF : (hot ? 0xEAF6FD : 0xF2F2F2), on ? 0xFFFFFF : (hot ? 0xA7D9F5 : 0xE3E3E3), 255, true);
+				cv.RoundFrame(rc.left, rc.top, tw, rc.bottom - rc.top + S(3), S(3), on ? 0x898C95 : (hot ? 0x3C7FB1 : 0x898C95), 255, true);
+				text->Draw(cv, tx + S(10), rc.top + (rc.bottom - rc.top - text->Measure(tabNames[i]).cy) / 2, tabNames[i], 0x000000);
+				Add(rc, [this, i] { tab = i, scroll = 0; });
+				tx += tw + S(1);
+			}
+			// The page.
+			auto c = Content();
+			cv.RoundRect(c.left, c.top, c.right - c.left, c.bottom - c.top, 0, 0xFFFFFF, 0xFFFFFF, 255);
+			for (int i = c.left; i < c.right; i++) cv.Blend(i, c.top, 0x898C95, 255);
+			// The selected tab's bottom edge opens into the page.
+			int sx = border + S(4);
+			for (int i = 0; i < tab; i++) sx += text->Measure(tabNames[i]).cx + S(21);
+			for (int i = sx + 1; i < sx + text->Measure(tabNames[tab]).cx + S(19); i++) cv.Blend(i, c.top, 0xFFFFFF, 255);
+
+			switch (tab)
+			{
+			case 0: PaintElements(); break;
+			case 1: PaintSimulation(); break;
+			case 2: PaintDisplay(); break;
+			case 3: PaintSaves(); break;
+			case 4: PaintOverlay(); break;
+			}
+
+			// The status bar: what the hovered control does.
+			int sy = cv.h - border - statusH;
+			cv.RoundRect(border, sy, cv.w - 2 * border, statusH, 0, 0xF7F9FC, 0xDCE5F1, 255);
+			for (int i = border; i < cv.w - border; i++) cv.Blend(i, sy, 0xA0AFC3, 255);
+			if (hover >= 0 && hover < int(hits.size()))
+			{
+				text->Draw(cv, border + S(8), sy + S(3), hits[hover].tip, 0x1E395B, false, cv.w - 2 * border - S(16));
 			}
 		}
 
@@ -563,45 +855,33 @@ namespace
 
 		void Mouse(UINT msg, int x, int y, WPARAM wp) override
 		{
-			auto sections = Sections();
-			auto tools = Tools();
-			auto area = ToolArea();
-			int nav = -1, tile = -1;
-			for (int i = 0; i < int(sections.size()); i++)
-				if (Inside(NavRect(i), x, y)) nav = i;
-			if (Inside(area, x, y))
-				for (int i = 0; i < int(tools.size()); i++)
-					if (Inside(TileRect(i), x, y)) tile = i;
-			bool close = Inside(CloseRect(), x, y), min = Inside(MinRect(), x, y);
-			if (msg == WM_MOUSELEAVE)
+			int at = -1;
+			if (msg != WM_MOUSELEAVE)
 			{
-				nav = tile = -1;
-				close = min = false;
+				for (int i = 0; i < int(hits.size()); i++)
+					if (Inside(hits[i].rc, x, y)) at = i;
 			}
-			if (nav != hoverNav || tile != hoverTile || close != hoverClose || min != hoverMin)
+			if (at != hover)
 			{
-				hoverNav = nav, hoverTile = tile, hoverClose = close, hoverMin = min;
+				hover = at;
 				dirty = true;
 			}
-			if ((msg == WM_LBUTTONDOWN || msg == WM_RBUTTONDOWN) && tile >= 0)
+			if (at >= 0 && msg == WM_LBUTTONUP && hits[at].left)
 			{
-				GameController::Ref().SetActiveTool(msg == WM_LBUTTONDOWN ? 0 : 1, tools[tile]);
+				auto action = hits[at].left; // the action may repaint and rebuild hits
+				action();
 				dirty = true;
 			}
-			if (msg == WM_LBUTTONDOWN && nav >= 0)
+			if (at >= 0 && msg == WM_RBUTTONUP && hits[at].right)
 			{
-				section = nav;
-				scroll = 0;
-				hoverTile = -1;
+				auto action = hits[at].right;
+				action();
 				dirty = true;
 			}
-			// Both hide the window; the tray icon brings it back. ponytail: no minimise animation to the tray yet.
-			if (msg == WM_LBUTTONUP && (close || min))
+			if (msg == WM_MOUSEWHEEL && tab == 0)
 			{
-				OverlayWindows::TogglePalette();
-			}
-			if (msg == WM_MOUSEWHEEL)
-			{
+				auto tools = Tools();
+				auto area = ToolArea();
 				int rows = (int(tools.size()) + Columns() - 1) / Columns();
 				int maxScroll = std::max(0, rows * (tileH + gap) - int(area.bottom - area.top));
 				scroll = std::clamp(scroll - GET_WHEEL_DELTA_WPARAM(wp) / WHEEL_DELTA * (tileH + gap), 0, maxScroll);
@@ -609,14 +889,30 @@ namespace
 			}
 		}
 
+		// Repaint when anything shown changes, from here, from TPT's keys, or from Lua.
 		void Tick()
 		{
 			auto &gc = GameController::Ref();
+			auto *model = gc.GetModel();
+			auto *sim = model->GetSimulation();
 			size_t count = 0;
 			for (auto *menu : gc.GetMenuList()) count += menu->GetToolList().size();
-			if (gc.GetActiveTool(0) != shownPrimary || gc.GetActiveTool(1) != shownSecondary || count != shownTools)
+			auto a = sim->playArea;
+			uint64_t state = 1469598103934665603ULL;
+			auto mix = [&](uint64_t v) { state = (state ^ v) * 1099511628211ULL; };
+			mix(uint64_t(uintptr_t(gc.GetActiveTool(0))));
+			mix(uint64_t(uintptr_t(gc.GetActiveTool(1))));
+			for (uint64_t v : { uint64_t(count), uint64_t(gc.GetPaused()), uint64_t(gc.GetEdgeMode()), uint64_t(sim->gravityMode),
+			                    uint64_t(sim->air->airMode), uint64_t(model->GetNewtonianGrvity()), uint64_t(gc.GetAHeatEnable()),
+			                    uint64_t(gc.GetHudEnable()), uint64_t(model->GetDecoration()), uint64_t(model->GetGravityGrid()),
+			                    uint64_t(OverlayGetInput()), uint64_t(showTPTMenus), uint64_t(a.pos.X), uint64_t(a.pos.Y),
+			                    uint64_t(a.size.X), uint64_t(a.size.Y) })
 			{
-				shownTools = count;
+				mix(v);
+			}
+			if (state != shownState)
+			{
+				shownState = state;
 				dirty = true;
 			}
 		}
@@ -684,9 +980,8 @@ namespace
 	};
 
 	HWND mainWindow = nullptr;
-	std::unique_ptr<Palette> palette;
+	std::unique_ptr<SideWindow> palette;
 	std::unique_ptr<Toast> toast;
-	bool showTPTMenus = false;
 	bool passThrough = false;
 
 	// The notification-area (tray) icon: left click shows or hides the Elements window, right click opens a menu.
@@ -821,6 +1116,14 @@ void OverlayWindows::Tick()
 	{
 		return;
 	}
+	static bool areaRestored = false;
+	if (!areaRestored)
+	{
+		auto &prefs = GlobalPrefs::Ref();
+		SetPlayArea(prefs.Get("Overlay.PlayArea.X", 0), prefs.Get("Overlay.PlayArea.Y", 0),
+		            prefs.Get("Overlay.PlayArea.W", CELLS.X), prefs.Get("Overlay.PlayArea.H", CELLS.Y));
+		areaRestored = true;
+	}
 	if (!palette && GlobalPrefs::Ref().Get("Overlay.Windows.Palette.Open", true))
 	{
 		TogglePalette();
@@ -854,9 +1157,9 @@ void OverlayWindows::TogglePalette()
 	}
 	if (!palette)
 	{
-		palette = std::make_unique<Palette>();
-		// Tall enough for every section in the navigation pane.
-		int w = S(560), h = palette->NavRect(int(palette->Sections().size())).top + S(4) + palette->statusH / 2 + palette->border;
+		palette = std::make_unique<SideWindow>();
+		// Tall enough for every section in the navigation pane and for the Simulation tab.
+		int w = S(560), h = std::max<int>(palette->NavRect(int(palette->Sections().size())).top + S(4) + palette->statusH + palette->border, S(560));
 		// Default: just right of TPT's window, or its top-left corner if that's off screen.
 		RECT rc;
 		GetWindowRect(mainWindow, &rc);
@@ -904,7 +1207,7 @@ bool OverlayWindows::HideTPTMenus()
 	return !showTPTMenus && palette && IsWindowVisible(palette->hwnd);
 }
 
-void OverlayWindows::SolidParticles(uint32_t *argb, int w)
+void OverlayWindows::ApplySimMasks(uint32_t *argb, int w)
 {
 	if (!&GameController::Ref())
 	{
@@ -912,16 +1215,52 @@ void OverlayWindows::SolidParticles(uint32_t *argb, int w)
 	}
 	// ponytail: assumes the sim is drawn 1:1 at the top-left; the zoom window's magnified area is not mapped.
 	auto *sim = GameController::Ref().GetModel()->GetSimulation();
+	auto area = sim->PlayRect();
+	bool full = sim->playArea == CELLS.OriginRect();
 	for (int y = 0; y < YRES; y++)
 		for (int x = 0; x < XRES; x++)
 		{
 			auto &p = argb[y * w + x];
-			if (!(p & 0xFFFFFF) && (sim->pmap[y][x] || sim->photons[y][x]))
+			if (!area.Contains({ x, y }))
+			{
+				p = 0;
+			}
+			else if (!(p & 0xFFFFFF) && (sim->pmap[y][x] || sim->photons[y][x]))
 			{
 				p = 0xFF000000;
 			}
 		}
+	if (!full)
+	{
+		// A faint frame just outside the area, so you can see where it ends.
+		auto br = area.BottomRight();
+		auto mark = [&](int x, int y) {
+			if (x >= 0 && y >= 0 && x < XRES && y < YRES) argb[y * w + x] = 0x785080C0;
+		};
+		for (int x = area.pos.X - 1; x <= br.X + 1; x++) mark(x, area.pos.Y - 1), mark(x, br.Y + 1);
+		for (int y = area.pos.Y; y <= br.Y; y++) mark(area.pos.X - 1, y), mark(br.X + 1, y);
+	}
 }
+
+void OverlayWindows::SetPlayArea(int x, int y, int w, int h)
+{
+	if (!&GameController::Ref())
+	{
+		return;
+	}
+	auto area = RectSized(Vec2(x, y), Vec2(w, h)) & CELLS.OriginRect();
+	if (area.size.X < 8 || area.size.Y < 8)
+	{
+		area = CELLS.OriginRect(); // too small to play in: back to the whole sim
+	}
+	GameController::Ref().GetModel()->GetSimulation()->playArea = area;
+	auto &prefs = GlobalPrefs::Ref();
+	prefs.Set("Overlay.PlayArea.X", area.pos.X);
+	prefs.Set("Overlay.PlayArea.Y", area.pos.Y);
+	prefs.Set("Overlay.PlayArea.W", area.size.X);
+	prefs.Set("Overlay.PlayArea.H", area.size.Y);
+}
+
 #else
 void OverlayWindows::Init(void *) {}
 void OverlayWindows::Tick() {}
@@ -929,5 +1268,6 @@ void OverlayWindows::TogglePalette() {}
 void OverlayWindows::SetPassThrough(bool) {}
 void OverlayWindows::Notify(const char *) {}
 bool OverlayWindows::HideTPTMenus() { return false; }
-void OverlayWindows::SolidParticles(uint32_t *, int) {}
+void OverlayWindows::ApplySimMasks(uint32_t *, int) {}
+void OverlayWindows::SetPlayArea(int, int, int, int) {}
 #endif

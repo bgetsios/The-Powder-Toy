@@ -869,7 +869,7 @@ void GameModel::SetSave(std::unique_ptr<SaveInfo> newSave, bool invertIncludePre
 		sim->clear_sim();
 		view->PauseRendererThread();
 		ren->ClearAccumulation();
-		sim->Load(saveData, !invertIncludePressure, { 0, 0 });
+		sim->Load(saveData, !invertIncludePressure, sim->playArea.pos);
 		// This save was created before logging existed
 		// Add in the correct info
 		if (saveData->authors.size() == 0)
@@ -921,7 +921,7 @@ void GameModel::SetSaveFile(std::unique_ptr<SaveFile> newSave, bool invertInclud
 		sim->clear_sim();
 		view->PauseRendererThread();
 		ren->ClearAccumulation();
-		sim->Load(saveData, !invertIncludePressure, { 0, 0 });
+		sim->Load(saveData, !invertIncludePressure, sim->playArea.pos);
 		Client::Ref().OverwriteAuthorInfo(saveData->authors);
 	}
 

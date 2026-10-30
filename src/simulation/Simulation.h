@@ -152,6 +152,14 @@ public:
 	unsigned int pmap_count[YRES][XRES];
 
 	int edgeMode = EDGE_VOID;
+	// The playable area, in cells. The rest of the (build-time) sim is off limits: solid wall with solid or loop
+	// edges, an air and particle sink with void edges. Full size = stock behaviour. Saves cover just this area.
+	Rect<int> playArea = CELLS.OriginRect();
+	void ApplyPlayArea();
+	Rect<int> PlayRect() const
+	{
+		return RectSized(playArea.pos * CELL, playArea.size * CELL);
+	}
 	int gravityMode = GRAV_VERTICAL;
 	float customGravityX = 0;
 	float customGravityY = 0;

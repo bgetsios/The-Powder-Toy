@@ -1247,7 +1247,7 @@ void GameController::OpenSearch(String searchText)
 void GameController::OpenLocalSaveWindow(bool asCurrent)
 {
 	Simulation * sim = gameModel->GetSimulation();
-	auto gameSave = sim->Save(gameModel->GetIncludePressure() != gameView->ShiftBehaviour(), RES.OriginRect());
+	auto gameSave = sim->Save(gameModel->GetIncludePressure() != gameView->ShiftBehaviour(), sim->PlayRect());
 	if(!gameSave)
 	{
 		new ErrorMessage("Error", "Unable to build save.");
@@ -1457,7 +1457,7 @@ void GameController::OpenSaveWindow()
 	if (user)
 	{
 		Simulation * sim = gameModel->GetSimulation();
-		auto gameSave = sim->Save(gameModel->GetIncludePressure() != gameView->ShiftBehaviour(), RES.OriginRect());
+		auto gameSave = sim->Save(gameModel->GetIncludePressure() != gameView->ShiftBehaviour(), sim->PlayRect());
 		if(!gameSave)
 		{
 			new ErrorMessage("Error", "Unable to build save.");
@@ -1500,7 +1500,7 @@ void GameController::SaveAsCurrent()
 	if (gameModel->GetSave() && user && user->Username == gameModel->GetSave()->GetUserName())
 	{
 		Simulation * sim = gameModel->GetSimulation();
-		auto gameSave = sim->Save(gameModel->GetIncludePressure() != gameView->ShiftBehaviour(), RES.OriginRect());
+		auto gameSave = sim->Save(gameModel->GetIncludePressure() != gameView->ShiftBehaviour(), sim->PlayRect());
 		if(!gameSave)
 		{
 			new ErrorMessage("Error", "Unable to build save.");

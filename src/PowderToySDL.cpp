@@ -304,6 +304,12 @@ void SDLSetScreen()
 	{
 		SDL_SetWindowSize(sdl_window, size.X, size.Y);
 		LoadWindowPosition();
+		if (overlayMode)
+		{
+			// The overlay covers its monitor; a saved normal-window position would push it off screen.
+			auto centred = SDL_WINDOWPOS_CENTERED_DISPLAY(SDL_GetWindowDisplayIndex(sdl_window));
+			SDL_SetWindowPosition(sdl_window, centred, centred);
+		}
 	}
 	ApplyFpsLimit();
 	if (newFrameOpsNorm.fullscreen)

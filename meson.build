@@ -222,7 +222,10 @@ if enable_http and host_platform != 'emscripten'
 endif
 
 project_link_args = []
-project_cpp_args = []
+project_cpp_args = [
+	'-DSIM_CELLS_X=' + get_option('sim_cells_x').to_string(),
+	'-DSIM_CELLS_Y=' + get_option('sim_cells_y').to_string(),
+]
 
 fftw_dep = dependency('fftw3f', static: is_static)
 threads_dep = dependency('threads')

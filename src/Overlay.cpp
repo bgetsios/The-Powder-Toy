@@ -178,7 +178,7 @@ void OverlayPresent(SDL_Window *window, const uint32_t *vid, int w, int h)
 	}
 	if (w == WINDOWW && h == WINDOWH)
 	{
-		OverlayWindows::SolidParticles(argb.data(), w);
+		OverlayWindows::ApplySimMasks(argb.data(), w);
 		if (OverlayWindows::HideTPTMenus())
 		{
 			// The side bar (x >= XRES) and the tool strip under the sim; the bottom button row stays.

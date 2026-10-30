@@ -3724,8 +3724,36 @@ void Simulation::UpdateGravityMask()
 }
 
 //updates pmap, gol, and some other simulation stuff (but not particles)
+// Re-applied every frame, so tools, clears and loads can't break it.
+// ponytail: loop edges act solid outside a smaller area; wrap at the area's edges needs the move code's bounds.
+void Simulation::ApplyPlayArea()
+{
+	if (playArea == CELLS.OriginRect())
+	{
+		return;
+	}
+	bool solid = edgeMode != EDGE_VOID;
+	for (auto c : CELLS.OriginRect())
+	{
+		if (!playArea.Contains(c))
+		{
+			bmap[c.Y][c.X] = solid ? WL_WALL : 0;
+			emap[c.Y][c.X] = 0;
+			pv[c.Y][c.X] = vx[c.Y][c.X] = vy[c.Y][c.X] = 0;
+		}
+	}
+	for (int i = 0; i <= parts.active; i++)
+	{
+		if (parts[i].type && !playArea.Contains(Vec2(int(parts[i].x + 0.5f), int(parts[i].y + 0.5f)) / CELL))
+		{
+			kill_part(i);
+		}
+	}
+}
+
 void Simulation::BeforeSim(bool willUpdate)
 {
+	ApplyPlayArea();
 	if (willUpdate)
 	{
 		{

@@ -24,13 +24,18 @@ current mode is saved as `Overlay.Input`. A fading glass notice shows the new mo
 TPT's menus are moving into their own desktop windows (`src/OverlayWindows.cpp`): real top-level layered windows,
 drawn in software with per-pixel alpha, styled like Windows Vista Aero. They don't take keyboard focus from TPT.
 
-- **Elements** palette: menu sections down the left (Explorer navigation pane), tools as Vista buttons, the hovered
-  tool's description in the status bar. Left click = primary tool (red outline), right click = secondary (blue).
-  Drag by the title bar; the position is saved (`Overlay.Windows.Palette.X/Y`). Close or Ctrl+Alt+E
-  (`Overlay.Keys.Palette`) hides and shows it. In Pass-through mode it fades and lets clicks through.
+- **The Powder Toy** side window, with tabs (Ctrl+Alt+E, `Overlay.Keys.Palette`, or the tray icon):
+  - **Elements**: menu sections down the left (Explorer navigation pane), tools as Vista buttons, the hovered
+    tool's description in the status bar. Left click = primary tool (red outline), right click = secondary (blue).
+  - **Simulation**: play area size, pause/step/reload/clear, edges, gravity, Newtonian gravity, air, ambient heat.
+  - **Display**: TPT's view modes, HUD, decorations, gravity field, TPT's full render options.
+  - **Saves**: open, save, stamps, reload, TPT's options.
+  - **Overlay**: where clicks go, show TPT's own menus, the shortcut list.
+  Drag by the title bar; the position is saved (`Overlay.Windows.Palette.X/Y`). In Pass-through mode it fades and
+  lets clicks through. The status bar says what the hovered control does.
 - Buttons show TPT's own icons (walls, tools) where it has them, colour swatches otherwise.
 - **Minimise** and close both hide a window to the tray icon.
-- While the Elements window is open, TPT's own side bar and tool strip are hidden (see-through, click-through);
+- While the side window is open, TPT's own side bar and tool strip are hidden (see-through, click-through);
   the bottom button row stays. The tray menu's "Show TPT's own menus" brings them back (`Overlay.ShowTPTMenus`).
 - **Tray icon** (notification area, bottom right): a plain Windows menu on purpose. It holds settings and opens
   the Vista windows. Left click shows or hides the Elements window; right click: Elements window, the three input
@@ -38,6 +43,12 @@ drawn in software with per-pixel alpha, styled like Windows Vista Aero. They don
   (Task Manager) can't be caught; Windows clears that leftover icon when you hover it.
 - UI scale: `Overlay.UIScale` (default: the larger of Windows display scaling and screen height / 1080, in
   quarter steps).
+- **Sim size**: the build sets the largest sim (`meson configure build -Dsim_cells_x=422 -Dsim_cells_y=110`, in
+  cells of 4 pixels; 422x110 cells x 3 pixel scale fills a 5120x1440 screen). The **play area** inside it changes
+  at run time (Simulation tab; `Overlay.PlayArea.X/Y/W/H`, in cells). Outside it is wall (solid or loop edges) or a
+  particle and air sink (void edges), and see-through on the desktop; a faint blue frame marks the edge. Saves
+  cover the play area only, and loads land at its top-left, so a save made at "Stock TPT size" (612x384) opens in
+  normal TPT, and any save opens in any area (bigger ones are clipped).
 - Black particles stay visible and clickable (the sim's particle map decides, not the colour). Not inside the
   zoom window yet.
 
@@ -45,7 +56,8 @@ drawn in software with per-pixel alpha, styled like Windows Vista Aero. They don
 
 Done (2026-10-30): overlay window; per-pixel alpha; input modes and global hotkeys; mode notices; Elements window
 (Vista) with icons, minimise and close; tray icon and menu; TPT's bars hidden while the Elements window is open;
-black particles solid; DPI-aware UI scale.
+black particles solid; DPI-aware UI scale. Later the same day: sim size as a build option, a play area that
+resizes at run time (saves follow it), the tabbed side window (Elements, Simulation, Display, Saves, Overlay).
 
 Assessment, in the order I'd do it (effort: S = an hour or two, M = a session, L = several sessions):
 
@@ -53,12 +65,15 @@ Assessment, in the order I'd do it (effort: S = an hour or two, M = a session, L
    tabs that can be torn off into their own windows (the Kingsway feel). The Elements window becomes its first
    tab. Then:
    - [ ] Tools and brush: brush shape and size, replace mode, deco colour picker
-   - [ ] Display: render and display modes (TPT's render options)
-   - [ ] Simulation: pause/step, gravity, air, heat, ambient heat, edge mode, clear
-   - [ ] Saves and stamps: open and save local saves, stamp library
-   - [ ] Overlay settings: input mode, hotkeys (record a key instead of editing powder.pref), UI scale
+   - [x] Display: view modes, HUD, decorations, gravity field, link to TPT's render options
+   - [x] Simulation: play area, pause/step/reload/clear, edges, gravity, air, ambient heat
+   - [x] Saves and stamps: buttons that open TPT's own browsers (a native Vista save list is a later step)
+   - [x] Overlay settings: input mode, TPT's menus, shortcut list
+   - [ ] Hotkey recording and UI scale in the Overlay tab (still powder.pref)
+   - [ ] Tear tabs off into their own windows; dock the window to a screen edge
+   - [ ] Play area: drag its edges on the desktop instead of +/- buttons; loop edges wrap at the area edge
    - [ ] Once these cover the bottom button row, hide it too
-2. [ ] **Full-screen sim** (M): pick RES at build time (a meson option sized to the screen at the chosen pixel
+2. [x] **Full-screen sim** (M): pick RES at build time (a meson option sized to the screen at the chosen pixel
    size). The windows already scale on their own, so the old "separate UI scale" item is no longer needed. RES at
    runtime (every static XRES/YRES array) stays a later L job, only if switching screens without a rebuild matters.
    Caveat: saves bigger than 612x384 won't open in stock TPT.

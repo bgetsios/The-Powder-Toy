@@ -7,4 +7,5 @@ void OverlayWindows::TogglePalette() {}
 void OverlayWindows::SetPassThrough(bool) {}
 void OverlayWindows::Notify(const char *) {}
 bool OverlayWindows::HideTPTMenus() { return false; }
-void OverlayWindows::SolidParticles(uint32_t *, int) {}
+void OverlayWindows::ApplySimMasks(uint32_t *, int) {}
+void OverlayWindows::SetPlayArea(int, int, int, int) {}
