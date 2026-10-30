@@ -1,6 +1,8 @@
 #include "Overlay.h"
 #include "OverlayWindows.h"
+#include "SimulationConfig.h"
 #include "prefs/GlobalPrefs.h"
+#include <vector>
 #ifdef _WIN32
 # include <SDL_syswm.h>
 # define WIN32_LEAN_AND_MEAN
@@ -71,6 +73,7 @@ namespace
 	}
 
 	// A top-down 32-bit DIB the frame is scaled into, then handed to UpdateLayeredWindow.
+	std::vector<uint32_t> argb;
 	HDC memDC = nullptr;
 	HBITMAP dib = nullptr;
 	uint32_t *bits = nullptr;
@@ -107,6 +110,8 @@ void ApplyOverlay(SDL_Window *window)
 	}
 	hwnd = info.info.win.window;
 	SetWindowLongPtrW(hwnd, GWL_EXSTYLE, GetWindowLongPtrW(hwnd, GWL_EXSTYLE) | WS_EX_LAYERED | WS_EX_TOOLWINDOW);
+	// SDL_WINDOW_ALWAYS_ON_TOP alone doesn't stick once the style changes above; set it on the window itself.
+	SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
 	auto &prefs = GlobalPrefs::Ref();
 	cycleInput = Hotkey::Parse(prefs.Get("Overlay.Keys.CycleInput", ByteString("Ctrl+Alt+O")));
 	passThroughKey = Hotkey::Parse(prefs.Get("Overlay.Keys.PassThrough", ByteString("Ctrl+Alt+P")));
@@ -163,16 +168,31 @@ void OverlayPresent(SDL_Window *window, const uint32_t *vid, int w, int h)
 		dibH = wh;
 	}
 	// Black is alpha 0: see-through, and clicks on it reach the desktop. Locked mode gives it alpha 1 instead:
-	// still invisible, but it catches clicks.
+	// still invisible, but it catches clicks. Black particles stay solid, and hidden menu bars are always clear.
 	uint32_t empty = input == OverlayInput::Locked ? 0x01000000 : 0;
+	argb.resize(size_t(w) * h);
+	for (int i = 0; i < w * h; i++)
+	{
+		auto c = vid[i] & 0xFFFFFF;
+		argb[i] = c ? c | 0xFF000000 : empty;
+	}
+	if (w == WINDOWW && h == WINDOWH)
+	{
+		OverlayWindows::SolidParticles(argb.data(), w);
+		if (OverlayWindows::HideTPTMenus())
+		{
+			// The side bar (x >= XRES) and the tool strip under the sim; the bottom button row stays.
+			for (int y = 0; y < WINDOWH - 16; y++)
+				for (int x = y < YRES ? XRES : 0; x < w; x++) argb[y * w + x] = 0;
+		}
+	}
 	for (int y = 0; y < wh; y++)
 	{
-		auto *src = vid + (y * h / wh) * w;
+		auto *src = argb.data() + (y * h / wh) * w;
 		auto *dst = bits + y * ww;
 		for (int x = 0; x < ww; x++)
 		{
-			auto c = src[x * w / ww] & 0xFFFFFF;
-			dst[x] = c ? c | 0xFF000000 : empty;
+			dst[x] = src[x * w / ww];
 		}
 	}
 	POINT origin{ 0, 0 };

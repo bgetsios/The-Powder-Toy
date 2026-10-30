@@ -143,6 +143,7 @@ public:
 	int GetNumMenus(bool onlyEnabled);
 	void RebuildFavoritesMenu();
 	Tool * GetActiveTool(int selection);
+	GameModel *GetModel() { return gameModel; }
 	void SetActiveTool(int toolSelection, Tool * tool);
 	void SetActiveTool(int toolSelection, ByteString identifier);
 	void SetLastTool(Tool * tool);

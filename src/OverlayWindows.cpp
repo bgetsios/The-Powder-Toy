@@ -4,6 +4,10 @@
 #ifdef _WIN32
 #include "Overlay.h"
 #include "gui/game/GameController.h"
+#include "gui/game/GameModel.h"
+#include "graphics/VideoBuffer.h"
+#include "simulation/Simulation.h"
+#include "SimulationConfig.h"
 #include "gui/game/Menu.h"
 #include "gui/game/tool/Tool.h"
 #include "prefs/GlobalPrefs.h"
@@ -407,11 +411,12 @@ namespace
 		int hoverNav = -1, hoverTile = -1;
 		bool hoverClose = false, hoverMin = false;
 		Tool *shownPrimary = nullptr, *shownSecondary = nullptr;
+		size_t shownTools = 0;
 
 		Palette()
 		{
 			name = "Palette";
-			titleH = S(28), border = S(6), navW = S(118), statusH = S(22), tileW = S(78), tileH = S(24), gap = S(4);
+			titleH = S(28), border = S(6), navW = S(118), statusH = S(22), tileW = S(92), tileH = S(24), gap = S(4);
 		}
 
 		std::vector<Menu *> Sections()
@@ -513,8 +518,21 @@ namespace
 				auto col = tool->Colour;
 				uint32_t rgb = (col.Red << 16) | (col.Green << 8) | col.Blue;
 				int sw = tileH - S(10);
-				tile.RoundRect(S(5), S(5), sw, sw, S(2), rgb, rgb, 255);
-				tile.RoundFrame(S(5), S(5), sw, sw, S(2), 0x404040, 200);
+				// TPT's own icon (walls, tools, some elements), scaled up; otherwise a colour swatch.
+				if (auto icon = tool->GetTexture(Vec2(26, 14)))
+				{
+					int iw = S(26), ih = S(14), iy = (tileH - ih) / 2;
+					auto size = icon->Size();
+					for (int y = 0; y < ih; y++)
+						for (int x = 0; x < iw; x++) tile.Blend(S(5) + x, iy + y, icon->Data()[(y * size.Y / ih) * size.X + x * size.X / iw] & 0xFFFFFF, 255);
+					tile.RoundFrame(S(5) - 1, iy - 1, iw + 2, ih + 2, 0, 0x404040, 200);
+					sw = iw;
+				}
+				else
+				{
+					tile.RoundRect(S(5), S(5), sw, sw, S(2), rgb, rgb, 255);
+					tile.RoundFrame(S(5), S(5), sw, sw, S(2), 0x404040, 200);
+				}
 				text->Draw(tile, S(9) + sw, (tileH - text->Measure(Label(tool)).cy) / 2, Label(tool), 0x000000, false, tileW - sw - S(12));
 				// Copy the tile in, clipped to the content area.
 				for (int y = 0; y < tileH; y++)
@@ -594,8 +612,11 @@ namespace
 		void Tick()
 		{
 			auto &gc = GameController::Ref();
-			if (gc.GetActiveTool(0) != shownPrimary || gc.GetActiveTool(1) != shownSecondary)
+			size_t count = 0;
+			for (auto *menu : gc.GetMenuList()) count += menu->GetToolList().size();
+			if (gc.GetActiveTool(0) != shownPrimary || gc.GetActiveTool(1) != shownSecondary || count != shownTools)
 			{
+				shownTools = count;
 				dirty = true;
 			}
 		}
@@ -665,6 +686,7 @@ namespace
 	HWND mainWindow = nullptr;
 	std::unique_ptr<Palette> palette;
 	std::unique_ptr<Toast> toast;
+	bool showTPTMenus = false;
 	bool passThrough = false;
 
 	// The notification-area (tray) icon: left click shows or hides the Elements window, right click opens a menu.
@@ -673,6 +695,12 @@ namespace
 
 	LRESULT CALLBACK TrayProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 	{
+		static const UINT taskbarCreated = RegisterWindowMessageW(L"TaskbarCreated");
+		if (msg == taskbarCreated)
+		{
+			Shell_NotifyIconW(NIM_ADD, &tray); // Explorer restarted and lost the icon
+			return 0;
+		}
 		if (msg != trayMessage)
 		{
 			return DefWindowProcW(hwnd, msg, wp, lp);
@@ -683,17 +711,23 @@ namespace
 		}
 		if (lp == WM_RBUTTONUP)
 		{
-			enum { elements = 1, inputBase = 10, exitItem = 99 };
-			// ponytail: a native menu (Windows 11 look); a Vista-themed one comes with the theme system.
+			// The plain Windows menu: settings and the way into the Vista windows.
+			enum { elements = 1, inputBase = 10, showMenus = 20, exitItem = 99 };
+			auto &prefs = GlobalPrefs::Ref();
+			auto label = [&](const wchar_t *text, const char *keyName, const char *fallback) {
+				return std::wstring(text) + L"\t" + Platform::WinWiden(prefs.Get(ByteString("Overlay.Keys.") + keyName, ByteString(fallback)));
+			};
 			HMENU menu = CreatePopupMenu();
 			bool open = palette && IsWindowVisible(palette->hwnd);
-			AppendMenuW(menu, MF_STRING | (open ? MF_CHECKED : 0), elements, L"Elements window	Ctrl+Alt+E");
+			AppendMenuW(menu, MF_STRING | (open ? MF_CHECKED : 0), elements, label(L"Elements window", "Palette", "Ctrl+Alt+E").c_str());
 			AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-			const wchar_t *modes[] = { L"Input: Auto", L"Input: Pass-through", L"Input: Locked to TPT" };
+			std::wstring modes[] = { L"Input: Auto", label(L"Input: Pass-through", "PassThrough", "Ctrl+Alt+P"), label(L"Input: Locked to TPT", "Locked", "Ctrl+Alt+L") };
 			for (int i = 0; i < int(OverlayInput::Count); i++)
 			{
-				AppendMenuW(menu, MF_STRING | (int(OverlayGetInput()) == i ? MF_CHECKED : 0), inputBase + i, modes[i]);
+				AppendMenuW(menu, MF_STRING | (int(OverlayGetInput()) == i ? MF_CHECKED : 0), inputBase + i, modes[i].c_str());
 			}
+			AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+			AppendMenuW(menu, MF_STRING | (showTPTMenus ? MF_CHECKED : 0), showMenus, L"Show TPT's own menus");
 			AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
 			AppendMenuW(menu, MF_STRING, exitItem, L"Exit");
 			POINT p;
@@ -709,6 +743,11 @@ namespace
 			if (cmd >= inputBase && cmd < inputBase + int(OverlayInput::Count))
 			{
 				OverlaySetInput(OverlayInput(cmd - inputBase));
+			}
+			if (cmd == showMenus)
+			{
+				showTPTMenus = !showTPTMenus;
+				prefs.Set("Overlay.ShowTPTMenus", showTPTMenus);
 			}
 			if (cmd == exitItem)
 			{
@@ -728,7 +767,8 @@ namespace
 		wc.lpszClassName = L"TPTOverlayTray";
 		RegisterClassW(&wc);
 		tray.cbSize = sizeof(tray);
-		tray.hWnd = CreateWindowExW(0, wc.lpszClassName, L"", 0, 0, 0, 0, 0, HWND_MESSAGE, nullptr, wc.hInstance, nullptr);
+		// A hidden top-level window, not a message-only one: those miss the TaskbarCreated broadcast.
+		tray.hWnd = CreateWindowExW(WS_EX_TOOLWINDOW, wc.lpszClassName, L"", WS_POPUP, 0, 0, 0, 0, nullptr, nullptr, wc.hInstance, nullptr);
 		tray.uID = 1;
 		tray.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
 		tray.uCallbackMessage = trayMessage;
@@ -742,6 +782,11 @@ namespace
 		wcscpy_s(tray.szTip, L"The Powder Toy (overlay)");
 		Shell_NotifyIconW(NIM_ADD, &tray);
 		std::atexit([] { Shell_NotifyIconW(NIM_DELETE, &tray); });
+		// On a crash too. A forced kill (Task Manager's End task) can't be caught: Windows clears that icon on hover.
+		static LPTOP_LEVEL_EXCEPTION_FILTER previous = SetUnhandledExceptionFilter([](EXCEPTION_POINTERS *e) -> LONG {
+			Shell_NotifyIconW(NIM_DELETE, &tray);
+			return previous ? previous(e) : EXCEPTION_CONTINUE_SEARCH;
+		});
 	}
 
 	void ApplyPassThrough(Panel &panel)
@@ -757,9 +802,14 @@ void OverlayWindows::Init(void *mainHwnd)
 {
 	mainWindow = HWND(mainHwnd);
 	auto &prefs = GlobalPrefs::Ref();
-	// Default UI scale from the screen height (1.0 at 1080p), overridable.
-	int screenH = GetSystemMetrics(SM_CYSCREEN);
-	uiScale = prefs.Get("Overlay.UIScale", std::max(1.f, std::round(screenH / 1080.f * 4) / 4));
+	// Default UI scale: the larger of Windows' display scaling (TPT is DPI aware) and screen height / 1080, in
+	// quarter steps. Overridable.
+	HDC screen = GetDC(nullptr);
+	float dpiScale = GetDeviceCaps(screen, LOGPIXELSY) / 96.f;
+	ReleaseDC(nullptr, screen);
+	float heightScale = GetSystemMetrics(SM_CYSCREEN) / 1080.f;
+	uiScale = prefs.Get("Overlay.UIScale", std::max(1.f, std::round(std::max(dpiScale, heightScale) * 4) / 4));
+	showTPTMenus = prefs.Get("Overlay.ShowTPTMenus", false);
 	text = new Text;
 	text->SetScale();
 	AddTrayIcon();
@@ -791,6 +841,10 @@ void OverlayWindows::Tick()
 
 void OverlayWindows::TogglePalette()
 {
+	if (!&GameController::Ref())
+	{
+		return; // the tray icon exists before the game does
+	}
 	bool open = !palette || !IsWindowVisible(palette->hwnd);
 	GlobalPrefs::Ref().Set("Overlay.Windows.Palette.Open", open);
 	if (!open)
@@ -813,8 +867,13 @@ void OverlayWindows::TogglePalette()
 			y = rc.top + S(8);
 		}
 		auto &prefs = GlobalPrefs::Ref();
-		x = prefs.Get("Overlay.Windows.Palette.X", x);
-		y = prefs.Get("Overlay.Windows.Palette.Y", y);
+		POINT saved{ prefs.Get("Overlay.Windows.Palette.X", x), prefs.Get("Overlay.Windows.Palette.Y", y) };
+		POINT grip{ saved.x + w / 2, saved.y + S(10) }; // the title bar must be on a monitor
+		if (MonitorFromPoint(grip, MONITOR_DEFAULTTONULL))
+		{
+			x = saved.x;
+			y = saved.y;
+		}
 		palette->Create(x, y, w, h);
 	}
 	palette->dirty = true;
@@ -840,10 +899,35 @@ void OverlayWindows::Notify(const char *message)
 	}
 	toast->Show(mainWindow, Platform::WinWiden(message));
 }
+bool OverlayWindows::HideTPTMenus()
+{
+	return !showTPTMenus && palette && IsWindowVisible(palette->hwnd);
+}
+
+void OverlayWindows::SolidParticles(uint32_t *argb, int w)
+{
+	if (!&GameController::Ref())
+	{
+		return;
+	}
+	// ponytail: assumes the sim is drawn 1:1 at the top-left; the zoom window's magnified area is not mapped.
+	auto *sim = GameController::Ref().GetModel()->GetSimulation();
+	for (int y = 0; y < YRES; y++)
+		for (int x = 0; x < XRES; x++)
+		{
+			auto &p = argb[y * w + x];
+			if (!(p & 0xFFFFFF) && (sim->pmap[y][x] || sim->photons[y][x]))
+			{
+				p = 0xFF000000;
+			}
+		}
+}
 #else
 void OverlayWindows::Init(void *) {}
 void OverlayWindows::Tick() {}
 void OverlayWindows::TogglePalette() {}
 void OverlayWindows::SetPassThrough(bool) {}
 void OverlayWindows::Notify(const char *) {}
+bool OverlayWindows::HideTPTMenus() { return false; }
+void OverlayWindows::SolidParticles(uint32_t *, int) {}
 #endif

@@ -257,7 +257,7 @@ void SDLSetScreen()
 		if (overlayMode)
 		{
 			flags |= SDL_WINDOW_BORDERLESS | SDL_WINDOW_ALWAYS_ON_TOP;
-			// The colour key only reaches what DWM composes from the window's own surface; GPU flip-model swapchains skip it.
+			// Overlay frames go out through UpdateLayeredWindow (Overlay.cpp); keep SDL off GPU swapchains, which fight it.
 			SDL_SetHint(SDL_HINT_RENDER_DRIVER, "software");
 		}
 		sdl_window = SDL_CreateWindow(APPNAME, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, size.X, size.Y, flags);

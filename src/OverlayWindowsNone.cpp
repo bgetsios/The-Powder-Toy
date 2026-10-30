@@ -6,3 +6,5 @@ void OverlayWindows::Tick() {}
 void OverlayWindows::TogglePalette() {}
 void OverlayWindows::SetPassThrough(bool) {}
 void OverlayWindows::Notify(const char *) {}
+bool OverlayWindows::HideTPTMenus() { return false; }
+void OverlayWindows::SolidParticles(uint32_t *, int) {}
