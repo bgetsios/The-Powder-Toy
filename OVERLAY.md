@@ -43,6 +43,10 @@ current mode is saved as `Overlay.Input`.
 
 ## Ideas
 
+- **Menu inspiration: Kingsway** (2017), whose whole UI is a fake retro desktop. Every TPT panel would be its own
+  draggable window: element palette, tools, render modes, settings, save browser, stamps. Windows can stack and
+  close, a start-button style launcher and taskbar reopen them, and items can be dragged between windows (e.g. an
+  element from the palette onto a quick-bar window). Combine with the Vista theme first, then other OS themes.
 - Smart menu behaviour: menus fade when unused, then come back on hover or a hotkey.
 - Per-app rules: pass-through automatically while a game or full-screen app is focused.
 
