@@ -127,6 +127,7 @@ endif
 powder_files = files(
 	'SDLCompat.cpp',
 	'PowderToySDL.cpp',
+	'Overlay.cpp',
 	'PowderToy.cpp',
 	'lua/CommandInterface.cpp',
 	'lua/TPTSTypes.cpp',
@@ -153,6 +154,7 @@ render_files = files(
 font_files = files(
 	'PowderToyFontEditor.cpp',
 	'PowderToySDL.cpp',
+	'Overlay.cpp',
 	'PowderToySDLCommon.cpp',
 )
 

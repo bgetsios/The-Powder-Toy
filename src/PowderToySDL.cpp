@@ -1,6 +1,7 @@
 #include "PowderToySDL.h"
 #include "SimulationConfig.h"
 #include "WindowIcon.h"
+#include "Overlay.h"
 #include "Config.h"
 #include "gui/interface/Engine.h"
 #include "graphics/Graphics.h"
@@ -248,6 +249,12 @@ void SDLSetScreen()
 		{
 			rendererFlags |= SDL_RENDERER_PRESENTVSYNC;
 		}
+		if (overlayMode)
+		{
+			flags |= SDL_WINDOW_BORDERLESS | SDL_WINDOW_ALWAYS_ON_TOP;
+			// The colour key only reaches what DWM composes from the window's own surface; GPU flip-model swapchains skip it.
+			SDL_SetHint(SDL_HINT_RENDER_DRIVER, "software");
+		}
 		sdl_window = SDL_CreateWindow(APPNAME, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, size.X, size.Y, flags);
 		if (!sdl_window)
 		{
@@ -257,6 +264,10 @@ void SDLSetScreen()
 		if constexpr (SET_WINDOW_ICON)
 		{
 			WindowIcon(sdl_window);
+		}
+		if (overlayMode)
+		{
+			ApplyOverlay(sdl_window);
 		}
 		SDL_SetHint(SDL_HINT_MOUSE_FOCUS_CLICKTHROUGH, "1");
 		SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, newFrameOpsNorm.blurryScaling ? "linear" : "nearest");

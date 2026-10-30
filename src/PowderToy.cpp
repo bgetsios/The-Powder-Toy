@@ -1,4 +1,5 @@
 #include "PowderToySDL.h"
+#include "Overlay.h"
 #include "Format.h"
 #include "X86KillDenormals.h"
 #include "prefs/GlobalPrefs.h"
@@ -376,6 +377,7 @@ int Main(int argc, char *argv[])
 		return arg.has_value() && trueString(arg.value());
 	};
 
+	overlayMode = trueArg(arguments["overlay"]);
 	auto kioskArg = arguments["kiosk"];
 	if (kioskArg.has_value())
 	{
