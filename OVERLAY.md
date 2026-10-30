@@ -17,16 +17,32 @@ clicks on see-through pixels reach the desktop and windows behind. Windows only 
 The hotkeys are global (polled each frame, so they work while TPT is unfocused) and customisable in
 `%APPDATA%\The Powder Toy\powder.pref`: `Overlay.Keys.CycleInput`, `Overlay.Keys.PassThrough` and
 `Overlay.Keys.Locked`, as text like `"Ctrl+Alt+O"` (Ctrl, Alt, Shift, Win plus a letter, digit or F1-F24). The
-current mode is saved as `Overlay.Input`.
+current mode is saved as `Overlay.Input`. A fading glass notice shows the new mode.
+
+## Windows
+
+TPT's menus are moving into their own desktop windows (`src/OverlayWindows.cpp`): real top-level layered windows,
+drawn in software with per-pixel alpha, styled like Windows Vista Aero. They don't take keyboard focus from TPT.
+
+- **Elements** palette: menu sections down the left (Explorer navigation pane), tools as Vista buttons, the hovered
+  tool's description in the status bar. Left click = primary tool (red outline), right click = secondary (blue).
+  Drag by the title bar; the position is saved (`Overlay.Windows.Palette.X/Y`). Close or Ctrl+Alt+E
+  (`Overlay.Keys.Palette`) hides and shows it. In Pass-through mode it fades and lets clicks through.
+- UI scale: `Overlay.UIScale` (default: screen height / 1080, in quarter steps).
 
 ## To-do
 
 - [x] Overlay window: borderless, always on top, see-through background (2026-10-30)
 - [x] Per-pixel alpha presentation (replaces the colour key; black particles still read as empty)
 - [x] Input modes Auto / Pass-through / Locked with global hotkeys, saved in prefs
-- [ ] On-screen feedback when the mode changes (a small toast)
+- [x] On-screen feedback when the mode changes (a fading glass notice)
 - [ ] A settings window for the overlay options and hotkeys (instead of editing powder.pref)
 - [ ] Menu access: show or hide the menu bars with a hotkey; optional auto-show when the cursor nears an edge
+- [x] Element palette as its own Vista window (2026-10-30)
+- [ ] Tool icons (walls, tools) on the palette buttons instead of colour swatches
+- [ ] Kingsway-style taskbar / start button to open every window; then more windows: tools and brush, render and
+      display modes, simulation options, save browser, stamps
+- [ ] Hide TPT's own menu bars in overlay mode once the windows cover them
 - [ ] **Menus in their own windows** (element palette, tools, options, ...), movable and dockable, scaling with
       the UI. Styled like **Windows Vista** (Aero glass title bars, gradients, glow buttons). Windows 11 has no Aero
       glass, so they're custom-drawn through a theme (skin) system rather than native controls.

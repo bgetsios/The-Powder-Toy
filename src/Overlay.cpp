@@ -1,4 +1,5 @@
 #include "Overlay.h"
+#include "OverlayWindows.h"
 #include "prefs/GlobalPrefs.h"
 #ifdef _WIN32
 # include <SDL_syswm.h>
@@ -52,11 +53,17 @@ namespace
 			return pressed;
 		}
 	};
-	Hotkey cycleInput, passThroughKey, lockedKey;
+	Hotkey cycleInput, passThroughKey, lockedKey, paletteKey;
 
-	void SetInput(OverlayInput newInput)
+	void SetInput(OverlayInput newInput, bool announce = true)
 	{
 		input = newInput;
+		OverlayWindows::SetPassThrough(input == OverlayInput::PassThrough);
+		if (announce)
+		{
+			static const char *names[] = { "Input: Auto", "Input: Pass-through", "Input: Locked to TPT" };
+			OverlayWindows::Notify(names[int(input)]);
+		}
 		auto ex = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
 		ex = input == OverlayInput::PassThrough ? ex | WS_EX_TRANSPARENT : ex & ~LONG_PTR(WS_EX_TRANSPARENT);
 		SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex);
@@ -86,7 +93,9 @@ void ApplyOverlay(SDL_Window *window)
 	cycleInput = Hotkey::Parse(prefs.Get("Overlay.Keys.CycleInput", ByteString("Ctrl+Alt+O")));
 	passThroughKey = Hotkey::Parse(prefs.Get("Overlay.Keys.PassThrough", ByteString("Ctrl+Alt+P")));
 	lockedKey = Hotkey::Parse(prefs.Get("Overlay.Keys.Locked", ByteString("Ctrl+Alt+L")));
-	SetInput(prefs.Get("Overlay.Input", OverlayInput::Count, OverlayInput::Auto));
+	paletteKey = Hotkey::Parse(prefs.Get("Overlay.Keys.Palette", ByteString("Ctrl+Alt+E")));
+	OverlayWindows::Init(hwnd);
+	SetInput(prefs.Get("Overlay.Input", OverlayInput::Count, OverlayInput::Auto), false);
 #else
 	(void)window; // ponytail: Windows only; X11/Wayland/macOS each need their own shape/input-region code
 #endif
@@ -111,6 +120,11 @@ void OverlayPresent(SDL_Window *window, const uint32_t *vid, int w, int h)
 	{
 		SetInput(input == OverlayInput::Locked ? OverlayInput::Auto : OverlayInput::Locked);
 	}
+	if (paletteKey.Pressed())
+	{
+		OverlayWindows::TogglePalette();
+	}
+	OverlayWindows::Tick();
 
 	int ww, wh;
 	SDL_GetWindowSize(window, &ww, &wh);

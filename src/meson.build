@@ -128,6 +128,7 @@ powder_files = files(
 	'SDLCompat.cpp',
 	'PowderToySDL.cpp',
 	'Overlay.cpp',
+	'OverlayWindows.cpp',
 	'PowderToy.cpp',
 	'lua/CommandInterface.cpp',
 	'lua/TPTSTypes.cpp',
@@ -155,6 +156,7 @@ font_files = files(
 	'PowderToyFontEditor.cpp',
 	'PowderToySDL.cpp',
 	'Overlay.cpp',
+	'OverlayWindowsNone.cpp',
 	'PowderToySDLCommon.cpp',
 )
 
