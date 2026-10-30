@@ -107,6 +107,11 @@ static void CalculateMousePosition(int *x, int *y)
 
 void blit(pixel *vid)
 {
+	if (overlayMode)
+	{
+		OverlayPresent(sdl_window, vid, WINDOWW, WINDOWH);
+		return;
+	}
 	SDL_UpdateTexture(sdl_texture, nullptr, vid, WINDOWW * sizeof (Uint32));
 	// need to clear the renderer if there are black edges (fullscreen, or resizable window)
 	if (currentFrameOps.fullscreen || currentFrameOps.resizable)
